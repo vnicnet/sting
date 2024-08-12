@@ -384,6 +384,7 @@ class MappingLayer(nn.Module):
         out = self.mlp(pooled_feature.to(device))
         return out
 
+
 class DeepSetsModel(nn.Module):
     def __init__(self, node_input_dim, hidden_dim, edge_hidden_dim, edge_output_dim, final_output_dim, mapping_hidden_dim, threshold):
         super(DeepSetsModel, self).__init__()
@@ -393,18 +394,20 @@ class DeepSetsModel(nn.Module):
         self.mapping = MappingLayer(hidden_dim, mapping_hidden_dim, final_output_dim)
 
     def forward(self, datas):
-        out=torch.zeros((len(datas), 20),device=device)
-        for i,data in enumerate(datas):
-            data=data.to(device)
+        batch_outputs = []
+        for data in datas:
+            data = data.to(device) 
             data = self.couche_initiale_gnn(data)
             data = self.couche_intermediaire(data)
-            out[i] =  global_mean_pool(data.x[:, 0], torch.zeros(data.x.size(0), dtype=torch.long,device=device)).view(-1)
-            
-        out=global_mean_pool(out,torch.zeros(out.size(0),dtype=torch.long,device=device))
+            pooled_graphs = global_mean_pool(data.x[:, 0], data.batch)
+            batch_outputs.append(pooled_graphs)
+        batch_outputs = torch.stack(batch_outputs)
+        out = global_mean_pool(batch_outputs, torch.zeros(batch_outputs.size(0), dtype=torch.long, device=device))
         output = self.mapping(out)
-        output=output.view(-1)
+        output = output.view(-1)
         return output
-    
+
+
 class GraphSetDataset(Dataset):
     def __init__(self, data_list, labels, set_size):
         self.data_list = data_list
@@ -425,27 +428,14 @@ dataset = GraphSetDataset(datalist, labels, set_size)
 dataset.__getitem__(0)
 
 def collate_fn(batch):
-    data_list = []
+
+    batched_data_list = []
     labels = []
     for sets, label in batch:
-        data_list.extend(sets)
+        batched_data_list.append(Batch.from_data_list(sets))
         labels.append(label)
-    batched_data = Batch.from_data_list(data_list)
-    labels = torch.tensor(labels)
-    return batched_data, labels
-
-
-def collate_fn(batch):
-    data_list = []
-    labels = []
-
-    for sets, label in batch:
-        data_list.extend(sets)
-        labels.extend([label] * len(sets))
-
-    batched_data = Batch.from_data_list(data_list)
-    labels = torch.tensor(labels, dtype=torch.float32)
-    return batched_data, labels
+    labels = torch.stack(labels) 
+    return batched_data_list, labels
 
 batch_size = 2
 
@@ -457,35 +447,38 @@ optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
 #total=numbers of sets=n
 
-def train(model, optimizer, loader, n, batch_size, leave=False):
 
+
+def train(model, optimizer, loader, n, batch_size, leave=False):
     model.train()
     MAE = torch.nn.L1Loss(reduction="mean")
     sum_loss = 0.0
     total = n // batch_size
     t = tqdm(enumerate(loader), total=total, leave=leave)
 
-    for i, (batched_data, y_batch) in t:
-        print('batched_data',batched_data)
-        print('y_batch',y_batch)
+    for i, (batched_data_list, y_batch) in t:
         optimizer.zero_grad()
-        for data in batched_data:
-            data.to(device)
-        y_batch = y_batch.to(device)
-        print('y_batch',y_batch)
-        output = model(batched_data)
-        print('output',output) 
-        batch_loss = MAE(output, y_batch)
-        batch_loss.backward()
-        batch_loss_item = batch_loss.item()
-        t.set_description("loss = %.5f" % batch_loss_item)
-        t.refresh()  # to show immediately the update
-        sum_loss += batch_loss_item
-        optimizer.step()
+        batch_outputs = []
+        for batched_data in batched_data_list:
+            batched_data = batched_data.to(device)
+            output = model([batched_data])
+            print('output',output)
+            batch_outputs.append(output)
 
-        leave = bool(i == total - 1)
+        batch_outputs = torch.stack(batch_outputs).view(batch_size, -1)
+        y_batch = y_batch.to(device)
+        print('batch_outputs',batch_outputs)
+        print('y_batch',y_batch)
+
+        batch_loss = MAE(batch_outputs, y_batch)
+        batch_loss.backward()
+        optimizer.step()
+        sum_loss += batch_loss.item()
+        t.set_description("loss = %.5f" % batch_loss.item())
+        t.refresh()
 
     return sum_loss / (i + 1)
+
 
 
 n_epochs = 1
