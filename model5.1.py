@@ -170,7 +170,6 @@ def créer_edge_graph(echantillon, threshold, max_neighbors, node_features):
 def simu_echantillonage_graph(range,param_model,lambdaParent,lambdaDaughter,radiusCluster,threshold,max_neighbors):
 
     echantillon_a=MaterPointProcess_0_99(lambdaParent,lambdaDaughter,radiusCluster,plot=False)#(100,50,0.10,False)
-    print(len(echantillon_a))
     db = gl.Db_fromPanda(echantillon_a)
     db.setLocators(["x1","x2"],gl.ELoc.X)
 
@@ -439,22 +438,17 @@ class DeepSetsModel(nn.Module):
 
         data = data.to(device)
         data_T=data.T.to(device)
-        data_batch=data.batch.to(device)
-        print('data_batch',data_batch)
+        data_batch=data.T2.to(device)
         data = self.couche_initiale_gnn(data)
         data = self.couche_intermediaire(data)
-        print('data',data)
+        #print('data',data)
         pooled_graphs = global_mean_pool(data.x[:, 0], data_T)
-        print('pooled_graphs',pooled_graphs)
-        batch_outputs.append(pooled_graphs)
-        batch_outputs = torch.stack(batch_outputs)
-        print('batch_outputs',batch_outputs)
-        #out = batch_outputs.mean(dim=0)  
-        out=global_mean_pool(data.x[:, 0], data_batch)  
+        #print('pooled_graphs',pooled_graphs)
+        #print('data_batch',data_batch)
+        out=global_mean_pool(pooled_graphs, data_batch)  
         print('outavantmapping',out)    
         output = self.mapping(out)
         output = output.view(-1)
-        print('outputdumodel',output)
         return output
     
 
@@ -479,9 +473,7 @@ loader = DataLoader(dataset, batch_size, shuffle=True)
 t = tqdm(enumerate(loader))
 for i, batched_data in t:
     
-    print(len(batched_data.T))
     print(batched_data)
-    print(len(batched_data.batch))
     print(batched_data.y)
     batched_data.y=torch.reshape(batched_data.y,(batch_size,2)) # work only if all mini batch got the same size (pas de reste de division euclidienne)
     print(batched_data.y)
@@ -507,35 +499,34 @@ def train(model, optimizer, loader, n, batch_size, leave=False):
     for i, batched_data in t:
         optimizer.zero_grad()
 
-        # Generate T1 based on the T attribute
         T1 = []
         for j in range(len(batched_data.T)):
-            T1.extend([j] * int(batched_data.T[j].item()))  # Ensure T is used correctly
+            T1.extend([j] * int(batched_data.T[j].item()))  
         batched_data.T = torch.tensor(T1, device=device)
 
-        batched_data = batched_data.to(device)
-        print(batched_data)
-        print(batched_data.T)
+        T2=[]
+        for w in range(total):
+            T2.extend([w]*int(batch_size))
+        print('T2',T2)
+        batched_data.T2 = torch.tensor(T2, device=device)
 
-        batched_data.y = batched_data.y.view(batch_size, 2)  # Ensure y is reshaped correctly
-        print(batched_data.y)
-        # Forward pass
+        batched_data = batched_data.to(device)
+
+        batched_data.y = batched_data.y.view(batch_size, 2) 
         output = model(batched_data)
-        print('outputdetrain',output)
         output=torch.reshape(output,(batch_size,2))
-        # Ensure the output shape is correct
+        print('outputdetrain',output)
+
         if output.size(0) != batch_size or output.size(1) != 2:
             raise ValueError(f"Expected output shape ({batch_size}, 2) but got {output.size()}")
 
         y_batch = batched_data.y.to(device)
-        print('y_batch',y_batch)
+        print('y_batch de train avant MAE',y_batch)
 
-        # Calculate loss
         batch_loss = MAE(output, y_batch)
         batch_loss.backward()
         optimizer.step()
 
-        # Accumulate loss
         sum_loss += batch_loss.item()
         t.set_description(f"loss = {batch_loss.item():.5f}")
         t.refresh()
