@@ -301,10 +301,12 @@ class CouchesintermediairesGNN(nn.Module):
     # mon forward modifié
     def forward(self, data):
 
-
         x, edge_index, edge_attr = data.x.to(device), data.edge_index.to(device), data.edge_attr.to(device)
-        edge_index = torch_geometric.utils.coalesce(edge_index)
         
+        print('data.x[3,0,:]',data.x[3,0,:])
+
+        edge_index = torch_geometric.utils.coalesce(edge_index)
+        #print('x.size()',x.size()) x.size() torch.Size([862, 2, 20])
         mlp_output = self.edge_mlp(edge_attr)
         one_hot_features = torch.stack([one_hot_encode_distance(self.threshold, d.item()) for d in edge_attr]).to(device)
         edge_attr_combined = torch.cat((one_hot_features, mlp_output), dim=1)
@@ -320,18 +322,17 @@ class CouchesintermediairesGNN(nn.Module):
                 sum_features += rho_j_j_prime * w_tilde_j_j_prime
             dataa[j, 1, :] = sum_features
 
-
-        for a in range(x.size(0)):
             
-            print('self.gamma1 @ x[a, 0] + self.gamma2 @ dataa[a, 1, :] + self.bias',self.gamma1 @ x[a, 0] + self.gamma2 @ dataa[a, 1, :]+ self.bias)
-            print('.view(-1, 1)self.gamma1 @ x[a, 0] + self.gamma2 @ dataa[a, 1, :] + self.bias',self.gamma1 @ x[a, 0].view(-1, 1) + self.gamma2 @ dataa[a, 1, :].view(-1, 1)+ self.bias.view(-1, 1))
 
-            dataa[a, 0, :] = torch.sigmoid(
-                self.gamma1 @ x[a, 0].view(-1, 1) + 
-                self.gamma2 @ dataa[a, 1, :].view(-1, 1) + 
-                self.bias.view(-1, 1)
+            dataa[j, 0, :] = torch.sigmoid(
+                self.gamma1 @ x[j, 0,:].view(-1,1) + 
+                self.gamma2 @ sum_features.view(-1,1) + 
+                self.bias.view(-1,1)
             ).squeeze()
-        
+        print('sum_features',sum_features)
+        print('self.gamma1',self.gamma1)
+        print('self.gamma2',self.gamma2)
+        print('dataa',dataa[3,0,:])
         
         return Data(x=dataa, edge_index=edge_index, edge_attr=edge_attr)
 
@@ -384,6 +385,8 @@ class CoucheinitialeGNN(nn.Module):
     def forward(self, data):
         x, edge_index, edge_attr = data.x.to(device), data.edge_index.to(device), data.edge_attr.to(device)
         edge_index = torch_geometric.utils.coalesce(edge_index)
+        #print('x.size()',x.size()) x.size() torch.Size([862, 2])
+
         mlp_output = self.edge_mlp(edge_attr)
         one_hot_features = torch.stack([one_hot_encode_distance(self.threshold, d.item()) for d in edge_attr]).to(device)
         edge_attr_combined = torch.cat((one_hot_features, mlp_output), dim=1)
@@ -399,12 +402,13 @@ class CoucheinitialeGNN(nn.Module):
                 sum_features += rho_j_j_prime * w_tilde_j_j_prime
             dataa[j, 1, :] = sum_features
 
-        for a in range(x.size(0)):
-            dataa[a, 0, :] = torch.sigmoid(
-                self.gamma1 @ x[a, 0].view(-1, 1) + 
-                self.gamma2 @ dataa[a, 1, :].view(-1, 1) + 
-                self.bias.view(-1, 1)
+            dataa[j, 0, :] = torch.sigmoid(
+                self.gamma1 @ x[j, 0].view(-1,1) + 
+                self.gamma2 @ sum_features.view(-1,1) + 
+                self.bias.view(-1,1)
             ).squeeze()
+
+        
         
         return Data(x=dataa, edge_index=edge_index, edge_attr=edge_attr)
     
@@ -444,13 +448,13 @@ class DeepSetsModel(nn.Module):
         data_batch=data.T2.to(device)
         data = self.couche_initiale_gnn(data)
         data = self.couche_intermediaire(data)
-        #print('data.x[:, 0]',data.x[:, 0])
+        print('data',data)
         #print('data_T',data_T)
-        pooled_graphs = global_mean_pool(data.x[:, 0], data_T)
-        #print('pooled_graphs',pooled_graphs)
+        pooled_graphs = global_mean_pool(data.x[:,0,:], data_T)
+        print('pooled_graphs',pooled_graphs)
         #print('data_batch',data_batch)
         out=global_mean_pool(pooled_graphs, data_batch)  
-        #print('outavantmapping',out)    
+        print('outavantmapping',out)    
         output = self.mapping(out)
         output = output.view(-1)
         return output
@@ -530,7 +534,18 @@ def train(model, optimizer, loader, n, batch_size, leave=False):
 
 
 # Epoch loop
-n_epochs = 1
+n_epochs = 20
+n = len(dataset)
+for epoch in range(n_epochs):
+    print(f'start of epoch: {epoch+1}/{n_epochs}')
+    loss = train(
+        model,
+        optimizer,
+        loader,
+        n,
+
+# Epoch loop
+n_epochs = 20
 n = len(dataset)
 for epoch in range(n_epochs):
     print(f'start of epoch: {epoch+1}/{n_epochs}')
@@ -543,4 +558,5 @@ for epoch in range(n_epochs):
         leave=(epoch == n_epochs - 1),
     )
     print(f'loss: {loss}')
+torch.save(model.state_dict(),'modelparameters_2x2')
 
