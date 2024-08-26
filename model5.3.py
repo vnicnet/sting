@@ -235,7 +235,7 @@ datalist=datamaker(constant_product,n,set_size)
 
 
 #####
-torch.autograd.set_detect_anomaly(True)
+#torch.autograd.set_detect_anomaly(True)
 
 class EdgeFeatureMLP2(nn.Module): #(1,128,10)
     def __init__(self, input_dim, hidden_dim, output_dim):
@@ -301,7 +301,6 @@ class CouchesintermediairesGNN(nn.Module):
     # mon forward modifié
     def forward(self, data):
 
-        print('avant',data.x[50, 1, :])
 
         x, edge_index, edge_attr = data.x.to(device), data.edge_index.to(device), data.edge_attr.to(device)
         edge_index = torch_geometric.utils.coalesce(edge_index)
@@ -310,7 +309,7 @@ class CouchesintermediairesGNN(nn.Module):
         one_hot_features = torch.stack([one_hot_encode_distance(self.threshold, d.item()) for d in edge_attr]).to(device)
         edge_attr_combined = torch.cat((one_hot_features, mlp_output), dim=1)
         self.w_tilde_cache = {}
-        data.x = torch.zeros(x.size(0), 2, 20, device=device)
+        dataa = torch.zeros(x.size(0), 2, 20, device=device)
 
         for j in range(x.size(0)):
             neighbors = torch.unique(edge_index[1][edge_index[0] == j], sorted=False)
@@ -319,20 +318,22 @@ class CouchesintermediairesGNN(nn.Module):
                 rho_j_j_prime = self.rho(x[j, 0], x[j_prime, 0]).view(1, -1)
                 w_tilde_j_j_prime = self.calculate_w_tilde(j, j_prime, edge_attr_combined, neighbors, edge_index)
                 sum_features += rho_j_j_prime * w_tilde_j_j_prime
-            data.x[j, 1, :] = sum_features
+            dataa[j, 1, :] = sum_features
 
 
         for a in range(x.size(0)):
-            data.x[a, 0, :] = torch.sigmoid(
+            
+            print('self.gamma1 @ x[a, 0] + self.gamma2 @ dataa[a, 1, :] + self.bias',self.gamma1 @ x[a, 0] + self.gamma2 @ dataa[a, 1, :]+ self.bias)
+            print('.view(-1, 1)self.gamma1 @ x[a, 0] + self.gamma2 @ dataa[a, 1, :] + self.bias',self.gamma1 @ x[a, 0].view(-1, 1) + self.gamma2 @ dataa[a, 1, :].view(-1, 1)+ self.bias.view(-1, 1))
+
+            dataa[a, 0, :] = torch.sigmoid(
                 self.gamma1 @ x[a, 0].view(-1, 1) + 
-                self.gamma2 @ data.x[a, 1, :].view(-1, 1) + 
+                self.gamma2 @ dataa[a, 1, :].view(-1, 1) + 
                 self.bias.view(-1, 1)
             ).squeeze()
         
-        print('data.x',data.x[50, 1, :])
-        print('data',data)
-
-        return Data(x=data.x, edge_index=edge_index, edge_attr=edge_attr)
+        
+        return Data(x=dataa, edge_index=edge_index, edge_attr=edge_attr)
 
 class EdgeFeatureMLP1(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
@@ -387,7 +388,7 @@ class CoucheinitialeGNN(nn.Module):
         one_hot_features = torch.stack([one_hot_encode_distance(self.threshold, d.item()) for d in edge_attr]).to(device)
         edge_attr_combined = torch.cat((one_hot_features, mlp_output), dim=1)
         self.w_tilde_cache = {} 
-        data.x = torch.zeros(x.size(0), 2, 20, device=device)
+        dataa = torch.zeros(x.size(0), 2, 20, device=device)
 
         for j in range(x.size(0)):
             neighbors = torch.unique(edge_index[1][edge_index[0] == j], sorted=False)
@@ -396,16 +397,16 @@ class CoucheinitialeGNN(nn.Module):
                 rho_j_j_prime = self.rho(x[j, 0], x[j_prime, 0]).view(1, -1)
                 w_tilde_j_j_prime = self.calculate_w_tilde(j, j_prime, edge_attr_combined, neighbors, edge_index)
                 sum_features += rho_j_j_prime * w_tilde_j_j_prime
-            data.x[j, 1, :] = sum_features
+            dataa[j, 1, :] = sum_features
 
         for a in range(x.size(0)):
-            data.x[a, 0, :] = torch.sigmoid(
+            dataa[a, 0, :] = torch.sigmoid(
                 self.gamma1 @ x[a, 0].view(-1, 1) + 
-                self.gamma2 @ data.x[a, 1, :].view(-1, 1) + 
+                self.gamma2 @ dataa[a, 1, :].view(-1, 1) + 
                 self.bias.view(-1, 1)
             ).squeeze()
         
-        return Data(x=data.x, edge_index=edge_index, edge_attr=edge_attr)
+        return Data(x=dataa, edge_index=edge_index, edge_attr=edge_attr)
     
 class expact(nn.Module):
     def forward(self, x):
@@ -443,13 +444,13 @@ class DeepSetsModel(nn.Module):
         data_batch=data.T2.to(device)
         data = self.couche_initiale_gnn(data)
         data = self.couche_intermediaire(data)
-        print('data.x[:, 0]',data.x[:, 0])
-        print('data_T',data_T)
+        #print('data.x[:, 0]',data.x[:, 0])
+        #print('data_T',data_T)
         pooled_graphs = global_mean_pool(data.x[:, 0], data_T)
-        print('pooled_graphs',pooled_graphs)
-        print('data_batch',data_batch)
+        #print('pooled_graphs',pooled_graphs)
+        #print('data_batch',data_batch)
         out=global_mean_pool(pooled_graphs, data_batch)  
-        print('outavantmapping',out)    
+        #print('outavantmapping',out)    
         output = self.mapping(out)
         output = output.view(-1)
         return output
