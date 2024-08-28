@@ -112,7 +112,7 @@ def MaterPointProcess_0_99(lambdaParent,lambdaDaughter,radiusCluster,plot=False)
 
 
 
-def créer_edge_graph(echantillon, threshold, max_neighbors, node_features):
+def créer_edge_graph(echantillon, threshold, max_neighbors):
     edge_sources = []
     edge_destinations = []
     edge_features = []
@@ -121,26 +121,34 @@ def créer_edge_graph(echantillon, threshold, max_neighbors, node_features):
         distances = []
         for j in range(len(echantillon)):
             if i != j:
-                dist = np.sqrt((echantillon.iloc[i]['x1'] - echantillon.iloc[j]['x1'])**2 + (echantillon.iloc[i]['x2'] - echantillon.iloc[j]['x2'])**2)
+                dist = np.sqrt((echantillon.iloc[i]['x1'] - echantillon.iloc[j]['x1'])**2 + 
+                               (echantillon.iloc[i]['x2'] - echantillon.iloc[j]['x2'])**2)
                 if dist < threshold:
                     distances.append((dist, j))
 
+        #distances = sorted(distances, key=lambda x: x[0])[:max_neighbors]
         if len(distances) > max_neighbors:
             distances = random.sample(distances, max_neighbors)
 
         for dist, j in distances:
-            edge_sources.append(i)
-            edge_destinations.append(j)
-            edge_features.append(dist)
-            edge_sources.append(j)
-            edge_destinations.append(i)
-            edge_features.append(dist)
+            if (i, j) not in zip(edge_sources, edge_destinations):
+                edge_sources.append(i)
+                edge_destinations.append(j)
+                edge_features.append(dist)
+            if (j, i) not in zip(edge_sources, edge_destinations):
+                edge_sources.append(j)
+                edge_destinations.append(i)
+                edge_features.append(dist)
 
     edge_index = torch.tensor([edge_sources, edge_destinations], dtype=torch.long)
     edge_attr = torch.tensor(edge_features, dtype=torch.float).view(-1, 1)  # Convert to tensor and reshape
 
+    node_features = torch.tensor(echantillon[['Simu']].values, dtype=torch.float)
+    node_features = torch.cat([node_features, torch.zeros((node_features.size(0), 1), dtype=torch.float)], dim=1)
+    
     data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr)
-    return (data)
+    return data
+
 
 
 def simu_echantillonage_graph(range,param_model,lambdaParent,lambdaDaughter,radiusCluster,threshold,max_neighbors):
@@ -155,9 +163,8 @@ def simu_echantillonage_graph(range,param_model,lambdaParent,lambdaDaughter,radi
 
     df=pd.DataFrame({'Simu': db['z1']})
     echantillon_a = pd.concat([echantillon_a, df],axis=1)
-    node_features = torch.tensor(echantillon_a[['Simu']].values, dtype=torch.float)
-
-    data=créer_edge_graph(echantillon_a,threshold,max_neighbors,torch.cat([node_features, torch.zeros((node_features.size(0), 1), dtype=torch.float)], dim=1)) #threshold=0.4 max_neighbors=10
+    #print(echantillon_a)
+    data=créer_edge_graph(echantillon_a,threshold,max_neighbors) #threshold=0.4 max_neighbors=10
     return(data)
 
 
@@ -192,7 +199,7 @@ def merge_components(components,set_size):
     graph = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     graph.T=T
     print('graph fait')
-    print(graph.edge_index.size())
+    #print(graph.edge_index.size())
     return graph
 
 
@@ -229,29 +236,28 @@ n=2
 set_size=3
 datalist=datamaker(constant_product,n,set_size)
 
-print(datalist[0])
 
 
 
-#problème dans la conception des objets datas ou on a plusieurs fois les mêmes edge index
+def find_duplicate_edges_with_attr(edge_index, edge_attr):
+    assert edge_index.size(1) == edge_attr.size(0), "edge_index and edge_attr must have the same length."
 
+    sorted_edge_index, sort_indices = torch.sort(edge_index, dim=0)
+    sorted_edge_attr = edge_attr[sort_indices[0]]  # Tri des attributs d'arête selon le même ordre
 
+    edge_pairs = sorted_edge_index.t()
+    edge_with_attr = torch.cat([edge_pairs, sorted_edge_attr], dim=1)
+    unique_edges, counts = torch.unique(edge_with_attr, dim=0, return_counts=True)
 
-print(datalist[0].edge_index[0][234])
-print(datalist[0].edge_index[1][234])
-print(datalist[0].edge_index[0][419])
-print(datalist[0].edge_index[1][419])
-print(datalist[0].edge_index[0][418])
-print(datalist[0].edge_index[1][418])
-print(datalist[0].edge_index[0][420])
-print(datalist[0].edge_index[1][420])
+    duplicates = unique_edges[counts > 1]
 
-
-
+    return duplicates
 
 
 
 
+
+print("Duplicated edges (including edge_attr):", len(find_duplicate_edges_with_attr(datalist[1].edge_index, datalist[1].edge_attr)))
 
 
 
@@ -337,11 +343,9 @@ class CouchesintermediairesGNN(nn.Module):
 
         neighbors=neighbors.view(-1)
         # Extract relevant edge attributes directly using vectorized operations
-        print(edge_index[1].unsqueeze(-1).size())
-        print(neighbors.size())
+        
         #mask = (edge_index[0] == j) & (edge_index[1].unsqueeze(-1) == neighbors)
         mask = (edge_index[0] == j) & (edge_index[1].unsqueeze(-1) == neighbors).any(dim=1)
-        print(edge_attr_combined.size())
         edge_attr_j = edge_attr_combined[mask].view(-1, edge_attr_combined.size(-1))
 
         # Calculate sum of weights using vectorized operations
@@ -361,20 +365,13 @@ class CouchesintermediairesGNN(nn.Module):
     def forward(self, data):
 
         x, edge_index, edge_attr = data.x.to(device), data.edge_index.to(device), data.edge_attr.to(device)
-        print('inter-edge_index',edge_index.size())
-        print('inter-edge_attr',edge_attr.size())
-        #print('data.x[3,0,:]',data.x[3,0,:])
+        
         edge_index = torch_geometric.utils.coalesce(edge_index)
-        #print('x.size()',x.size()) x.size() torch.Size([862, 2, 20])
         mlp_output = self.edge_mlp(edge_attr)
-        print('inter-mlp_output',mlp_output.size())
-        #print(mlp_output)
-        #print(mlp_output.size())
+        
         #print('fin edge_mlp(edge_attr)',time.time() - time1)
         one_hot_features = torch.stack([one_hot_encode_distance(self.threshold, d.item()) for d in edge_attr]).to(device)
-        print('inter-one_hot_features',one_hot_features.size())
         edge_attr_combined = torch.cat((one_hot_features, mlp_output), dim=1)
-        print('inter-eac',edge_attr_combined.size())
         #print('fin edge_attr_combined',time.time() - time1)
         self.w_tilde_cache = {}
         dataa = torch.zeros(x.size(0), 2, 20, device=device)
@@ -390,22 +387,15 @@ class CouchesintermediairesGNN(nn.Module):
                 w_tilde_j_j_primenew = self.calculate_w_tildenew(j, j_prime, edge_attr_combined, neighbors, edge_index)
 
                 #sum_features += rho_j_j_prime * w_tilde_j_j_prime
-                sum_featuresnew += rho_j_j_prime * w_tilde_j_j_prime
+                sum_featuresnew += rho_j_j_prime * w_tilde_j_j_primenew
             dataa[j, 1, :] = sum_featuresnew
-
-            print(sum_features ==  sum_featuresnew)
-
             
-
             dataa[j, 0, :] = torch.sigmoid(
                 self.gamma1 @ x[j, 0,:].view(-1,1) + 
                 self.gamma2 @ sum_featuresnew.view(-1,1) + 
                 self.bias.view(-1,1)
             ).squeeze()
-        #print('sum_features',sum_features)
-        #print('self.gamma1',self.gamma1)
-        #print('self.gamma2',self.gamma2)
-        #print('dataa',dataa[3,0,:])
+        
         
         return Data(x=dataa, edge_index=edge_index, edge_attr=edge_attr)
 
@@ -463,40 +453,13 @@ class CoucheinitialeGNN(nn.Module):
         if key in self.w_tilde_cache:
             return self.w_tilde_cache[key]
 
-
         neighbors=neighbors.view(-1)
-        # Extract relevant edge attributes directly using vectorized operations
-        #print(edge_index[1].unsqueeze(-1).size())
-        print(neighbors.size())
-        #mask = (edge_index[0] == j) & (edge_index[1].unsqueeze(-1) == neighbors)
         mask = (edge_index[0] == j) & (edge_index[1].unsqueeze(-1) == neighbors).any(dim=1)
-        #print(edge_attr_combined.size())  torch.Size([19454, 20])
         edge_attr_j = edge_attr_combined[mask].view(-1, edge_attr_combined.size(-1))
-        #print('edge_attr_j.size()',edge_attr_j.size())
-        # Calculate sum of weights using vectorized operations
         sum_w = edge_attr_j.sum(dim=0, keepdim=True)
-        #print('sum_w.size()',sum_w.size())
-        print(j,j_prime)
-
-        print(edge_index)
-        print(edge_index.size())
-
-
-        # Handle division and replacement efficiently
-        print(j,j_prime)
-        #print(edge_attr_combined[(edge_index[0] == j) & (edge_index[1] == j_prime)].view(1, -1))
-        a=torch.nonzero((edge_index[0] == j) & (edge_index[1] == j_prime))
-        print('aaaahhh',a)
-        print(edge_index[0][j])
-        print(edge_index[1][j_prime])
-        print(edge_index[0][j])
-        print(edge_index[1][j_prime])
-
-
         w_tilde = edge_attr_combined[(edge_index[0] == j) & (edge_index[1] == j_prime)].view(1, -1) / sum_w
         w_tilde = torch.where(sum_w != 0, w_tilde, torch.full_like(w_tilde, 1e-2))
 
-        # Cache the result
         self.w_tilde_cache[key] = w_tilde
 
         return w_tilde
@@ -504,13 +467,6 @@ class CoucheinitialeGNN(nn.Module):
     def forward(self, data):
         x, edge_index, edge_attr = data.x.to(device), data.edge_index.to(device), data.edge_attr.to(device)
         
-        print('init-edge_index',edge_index.size())
-        print('init-edge_attr',edge_attr.size())
-        #edge_index,edge_attr = torch_geometric.utils.coalesce(edge_index,edge_attr,reduce='mean', is_sorted=True)
-        #print('init-edge_index',edge_index.size())
-        #print('init-edge_attr',edge_attr.size())
-        
-        #print('x.size()',x.size()) x.size() torch.Size([862, 2])
 
         mlp_output = self.edge_mlp(edge_attr)
         one_hot_features = torch.stack([one_hot_encode_distance(self.threshold, d.item()) for d in edge_attr]).to(device)
