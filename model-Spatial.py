@@ -18,6 +18,9 @@ from torch_geometric.data import Batch
 from tqdm import tqdm
 import time
 
+from torch_geometric.utils import to_scipy_sparse_matrix
+from scipy.sparse.csgraph import connected_components
+
 device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 ####  DATA
@@ -108,35 +111,6 @@ def MaterPointProcess_0_99(lambdaParent,lambdaDaughter,radiusCluster,plot=False)
     return(echantillon)
 
 
-def créer_edge_idx_atr(echantillon, threshold, max_neighbors):
-    edge_sources = []
-    edge_destinations = []
-    edge_features = []
-
-    for i in range(len(echantillon)):
-        distances = []
-        for j in range(len(echantillon)):
-            if i != j:
-                dist = np.sqrt((echantillon.iloc[i]['x1'] - echantillon.iloc[j]['x1'])**2 +(echantillon.iloc[i]['x2'] - echantillon.iloc[j]['x2'])**2)
-                if dist < threshold:
-                    distances.append((dist, j))
-
-        if len(distances) > max_neighbors:
-            distances = random.sample(distances, max_neighbors)
-
-        for dist, j in distances:
-            edge_sources.append(i)
-            edge_destinations.append(j)
-            edge_features.append(dist)
-            edge_sources.append(j)
-            edge_destinations.append(i)
-            edge_features.append(dist)
-
-    edge_index = torch.tensor([edge_sources, edge_destinations], dtype=torch.long)
-    edge_attr = torch.tensor(edge_features, dtype=torch.float).view(-1, 1)  # Convert to tensor and reshape
-
-    return (edge_index,edge_attr)
-
 
 def créer_edge_graph(echantillon, threshold, max_neighbors, node_features):
     edge_sources = []
@@ -195,8 +169,13 @@ def merge_components(components,set_size):
     i=0
     T=torch.empty(set_size)
     for component in components:
-        print(num_nodes_offset)
-        print('component.x',component.x.size())
+        print('num_nodes_offset',num_nodes_offset)
+        #print('avantcoalesce')
+        #print('component.x',component.x.size())
+        print('component.edge_index.size()',component.edge_index.size() )
+        component.edge_index,component.edge_attr = torch_geometric.utils.coalesce(component.edge_index,component.edge_attr,reduce='mean', is_sorted=True)
+        print('aprescoalesce')
+        #print('component.x',component.x.size())
         x_list.append(component.x)
         print(component.edge_index + num_nodes_offset)
         print('component.edge_index.size()',component.edge_index.size() )
@@ -225,6 +204,14 @@ def simu_graph(set_size, range_val, param_model, lambdaParent, lambdaDaughter, r
     return data
 
 
+
+def composante_connexes(data):
+    adj_matrix = to_scipy_sparse_matrix(data.edge_index)
+    num_components, labels = connected_components(adj_matrix, directed=False)
+    print(f"Le graphe contient {num_components} composante(s) connexe(s).")
+    return(num_components)
+
+
 def datamaker(constant_product,n,set_size):
     datalist=[]
     range_list=np.random.uniform(0.05,0.5,n)
@@ -233,7 +220,7 @@ def datamaker(constant_product,n,set_size):
     lambdaDaughter =[ (constant_product / lambdaParent[i]) for i in range(n)]
     for i in range(n):          
         datalist.append(simu_graph(set_size,range_list[i],variance_list[i],lambdaParent[i],lambdaDaughter[i],0.10,0.4,10))
-
+    #composante_connexes(datalist)
     print(f"Generated dataset size: {n*set_size}")
     return datalist
 
@@ -242,16 +229,22 @@ n=2
 set_size=3
 datalist=datamaker(constant_product,n,set_size)
 
-print(datalist)
+print(datalist[0])
+
+
 
 #problème dans la conception des objets datas ou on a plusieurs fois les mêmes edge index
 
 
 
-print(datalist[0].edge_index[0][12])
-print(datalist[0].edge_index[1][12])
-print(datalist[0].edge_index[0][403])
-print(datalist[0].edge_index[1][403])
+print(datalist[0].edge_index[0][234])
+print(datalist[0].edge_index[1][234])
+print(datalist[0].edge_index[0][419])
+print(datalist[0].edge_index[1][419])
+print(datalist[0].edge_index[0][418])
+print(datalist[0].edge_index[1][418])
+print(datalist[0].edge_index[0][420])
+print(datalist[0].edge_index[1][420])
 
 
 
@@ -473,16 +466,16 @@ class CoucheinitialeGNN(nn.Module):
 
         neighbors=neighbors.view(-1)
         # Extract relevant edge attributes directly using vectorized operations
-        print(edge_index[1].unsqueeze(-1).size())
+        #print(edge_index[1].unsqueeze(-1).size())
         print(neighbors.size())
         #mask = (edge_index[0] == j) & (edge_index[1].unsqueeze(-1) == neighbors)
         mask = (edge_index[0] == j) & (edge_index[1].unsqueeze(-1) == neighbors).any(dim=1)
         #print(edge_attr_combined.size())  torch.Size([19454, 20])
         edge_attr_j = edge_attr_combined[mask].view(-1, edge_attr_combined.size(-1))
-        print('edge_attr_j.size()',edge_attr_j.size())
+        #print('edge_attr_j.size()',edge_attr_j.size())
         # Calculate sum of weights using vectorized operations
         sum_w = edge_attr_j.sum(dim=0, keepdim=True)
-        print('sum_w.size()',sum_w.size())
+        #print('sum_w.size()',sum_w.size())
         print(j,j_prime)
 
         print(edge_index)
@@ -491,9 +484,9 @@ class CoucheinitialeGNN(nn.Module):
 
         # Handle division and replacement efficiently
         print(j,j_prime)
-        print(edge_attr_combined[(edge_index[0] == j) & (edge_index[1] == j_prime)].view(1, -1))
+        #print(edge_attr_combined[(edge_index[0] == j) & (edge_index[1] == j_prime)].view(1, -1))
         a=torch.nonzero((edge_index[0] == j) & (edge_index[1] == j_prime))
-        print(a)
+        print('aaaahhh',a)
         print(edge_index[0][j])
         print(edge_index[1][j_prime])
         print(edge_index[0][j])
@@ -629,13 +622,52 @@ class GraphSetDataset(Dataset):
 
 
 
+
+def collate_fn(batch):
+
+    x_list = []
+    edge_index_list = []
+    edge_attr_list = []
+    num_nodes_offset = 0
+    i=0
+    #T=torch.empty(len(batch))
+    labels = torch.empty(len(batch),2)
+    for allset, label in batch:
+        data_list.append([Batch.from_data_list(sets)])
+        labels.append(label)
+        x_list.append(allset.x)
+        edge_index_list.append(allset.edge_index + num_nodes_offset)  # Ajuster les indices des arêtes
+        edge_attr_list.append(allset.edge_attr)
+        num_nodes_offset += allset.num_nodes
+        #T[i]=allset.num_nodes
+        #i+=1
+
+
+    x = torch.cat(x_list, dim=0)
+    edge_index = torch.cat(edge_index_list, dim=1)
+    edge_attr = torch.cat(edge_attr_list, dim=0)
+    graph = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+    #graph.T=T
+    labels = torch.tensor( labels,dtype=torch.float32)
+    return data_list, labels
+
+
+ 
+
+
+
+
+
+
+
+
 ###
 
 dataset = GraphSetDataset(datalist)
 
 batch_size = 2
 
-loader = DataLoader(dataset, batch_size, shuffle=True)
+loader = DataLoader(dataset, batch_size, collate_fn=collate_fn, shuffle=True)
 
 model = DeepSetsModel(node_input_dim=1, hidden_dim=20, edge_hidden_dim=128, edge_output_dim=10, final_output_dim=2, mapping_hidden_dim=128, threshold=0.40).to(device)
 
@@ -673,7 +705,8 @@ t = tqdm(enumerate(loader))
 timeinin = time.time()
 timein = timeinin
 for i, batched_data in t:
-
+    composante_connexes(batched_data)
+    print('batcheddata.Tavant',batched_data.T)
     optimizer.zero_grad()
     T1 = []
     for j in range(len(batched_data.T)):
@@ -682,11 +715,14 @@ for i, batched_data in t:
     T2=[]
     for w in range(len(batched_data)):
         T2.extend([w] * set_size)
-    #print('T2',T2)
     batched_data.T2 = torch.tensor(T2, device=device)
+    #print('T2',T2)
+
     batched_data.y = batched_data.y.view(batch_size, 2) 
     batched_data = batched_data.to(device)
-    print(batched_data)
+
+    print('batcheddata',batched_data)
+    print()
     
     
     output = model(batched_data)
