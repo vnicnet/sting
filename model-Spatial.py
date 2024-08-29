@@ -176,19 +176,10 @@ def merge_components(components,set_size):
     i=0
     T=torch.empty(set_size)
     for component in components:
-        print('num_nodes_offset',num_nodes_offset)
-        #print('avantcoalesce')
-        #print('component.x',component.x.size())
-        print('component.edge_index.size()',component.edge_index.size() )
-        component.edge_index,component.edge_attr = torch_geometric.utils.coalesce(component.edge_index,component.edge_attr,reduce='mean', is_sorted=True)
-        print('aprescoalesce')
-        #print('component.x',component.x.size())
-        x_list.append(component.x)
-        print(component.edge_index + num_nodes_offset)
-        print('component.edge_index.size()',component.edge_index.size() )
-
-        edge_index_list.append(component.edge_index + num_nodes_offset)  # Ajuster les indices des arêtes
         
+        component.edge_index,component.edge_attr = torch_geometric.utils.coalesce(component.edge_index,component.edge_attr,reduce='mean', is_sorted=True)
+        x_list.append(component.x)
+        edge_index_list.append(component.edge_index + num_nodes_offset)  # Ajuster les indices des arêtes
         edge_attr_list.append(component.edge_attr)
         num_nodes_offset += component.num_nodes
         T[i]=component.num_nodes
@@ -198,14 +189,12 @@ def merge_components(components,set_size):
     edge_attr = torch.cat(edge_attr_list, dim=0)
     graph = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     graph.T=T
-    print('graph fait')
-    #print(graph.edge_index.size())
+    
     return graph
 
 
 def simu_graph(set_size, range_val, param_model, lambdaParent, lambdaDaughter, radiusCluster, threshold, max_neighbors):
     data = [simu_echantillonage_graph(range_val, param_model, lambdaParent, lambdaDaughter, radiusCluster, threshold, max_neighbors) for i in range(int(set_size))]
-    print('data avant merge componenets ',data)
     data=merge_components(data,set_size)
     data.y=torch.tensor((range_val,param_model))
     return data
@@ -232,8 +221,8 @@ def datamaker(constant_product,n,set_size):
     return datalist
 
 constant_product=5000
-n=2
-set_size=3
+n=10
+set_size=5
 datalist=datamaker(constant_product,n,set_size)
 
 
@@ -253,18 +242,7 @@ def find_duplicate_edges_with_attr(edge_index, edge_attr):
 
     return duplicates
 
-
-
-
-
 print("Duplicated edges (including edge_attr):", len(find_duplicate_edges_with_attr(datalist[1].edge_index, datalist[1].edge_attr)))
-
-
-
-
-
-
-
 
 
 
@@ -571,14 +549,6 @@ class GraphSetDataset(Dataset):
         return self.datalist[idx]
 
 
-
-
-
-
-
-
-
-
 def collate_fn(batch):
 
     x_list = []
@@ -615,13 +585,11 @@ def collate_fn(batch):
 
 
 
-
-
 ###
 
 dataset = GraphSetDataset(datalist)
 
-batch_size = 2
+batch_size = 5
 
 loader = DataLoader(dataset, batch_size, collate_fn=collate_fn, shuffle=True)
 
@@ -634,35 +602,11 @@ optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 ###
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 t = tqdm(enumerate(loader))
 timeinin = time.time()
 timein = timeinin
 for i, batched_data in t:
     composante_connexes(batched_data)
-    print('batcheddata.Tavant',batched_data.T)
     optimizer.zero_grad()
     T1 = []
     for j in range(len(batched_data.T)):
@@ -677,10 +621,6 @@ for i, batched_data in t:
     batched_data.y = batched_data.y.view(batch_size, 2) 
     batched_data = batched_data.to(device)
 
-    print('batcheddata',batched_data)
-    print()
-    
-    
     output = model(batched_data)
     output=torch.reshape(output,(batch_size,2))
     print(output)
@@ -694,28 +634,7 @@ print(timeout)
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#####
 
 
 
@@ -739,11 +658,9 @@ def train(model, optimizer, loader, n, batch_size, leave=False):
         T2=[]
         for w in range(len(batched_data)):
             T2.extend([w] * set_size)
-        #print('T2',T2)
         batched_data.T2 = torch.tensor(T2, device=device)
 
         batched_data.y = batched_data.y.view(batch_size, 2) 
-
         batched_data = batched_data.to(device)
 
         output = model(batched_data)
