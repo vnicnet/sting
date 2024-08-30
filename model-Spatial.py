@@ -25,6 +25,11 @@ device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 ####  DATA
 
+
+#MaterPointProcess_0_99 
+#simule un doublo procédé de poisson d'abord sur la fenetre etendue puis sur un cercle 
+#return un dataframe panda avec une colonne 
+
 def MaterPointProcess_0_99(lambdaParent,lambdaDaughter,radiusCluster,plot=False):
 
     # Simulation window parameters
@@ -47,6 +52,7 @@ def MaterPointProcess_0_99(lambdaParent,lambdaDaughter,radiusCluster,plot=False)
 
     # Simulate Poisson point process for the parents
     numbPointsParent = np.random.poisson(areaTotalExt * lambdaParent);  # Poisson number of points
+    
     # x and y coordinates of Poisson points for the parent
     xxParent = xMinExt + xDeltaExt * np.random.uniform(0, 1, numbPointsParent);
     yyParent = yMinExt + yDeltaExt * np.random.uniform(0, 1, numbPointsParent);
@@ -96,7 +102,7 @@ def MaterPointProcess_0_99(lambdaParent,lambdaDaughter,radiusCluster,plot=False)
             axs[0].axis('equal')
 
             # Heatmap data
-            heatmap_data = df.pivot_table(index='x2', columns='x1', values='Simu')
+            heatmap_data = echantillon.pivot_table(index='x2', columns='x1', values='Simu')
 
             # Second heatmap plot
             cax = axs[1].imshow(heatmap_data, aspect='auto', origin='lower', cmap='viridis', extent=[0, 1, 0, 1])
@@ -109,7 +115,6 @@ def MaterPointProcess_0_99(lambdaParent,lambdaDaughter,radiusCluster,plot=False)
             plt.show()
 
     return(echantillon)
-
 
 
 def créer_edge_graph(echantillon, threshold, max_neighbors):
@@ -150,7 +155,6 @@ def créer_edge_graph(echantillon, threshold, max_neighbors):
     return data
 
 
-
 def simu_echantillonage_graph(range,param_model,lambdaParent,lambdaDaughter,radiusCluster,threshold,max_neighbors):
 
     echantillon_a=MaterPointProcess_0_99(lambdaParent,lambdaDaughter,radiusCluster,plot=False)#(100,50,0.10,False)
@@ -158,7 +162,7 @@ def simu_echantillonage_graph(range,param_model,lambdaParent,lambdaDaughter,radi
     db.setLocators(["x1","x2"],gl.ELoc.X)
 
     model = gl.Model.createFromParam(type=gl.ECov.BESSEL_K, range = range, param = param_model)  # comment rajouter la NUGGET si il ne prends pas de typeS ?
-    err = gl.simtub(None, db, model, None, nbsimu=1, seed=13126, nbtuba = 1000)
+    err = gl.simtub(None, db, model, None, nbsimu=1, seed=0, nbtuba = 1000) #seed=0 lance à chaque fois une simu différente
     #err = gl.Model.addCovFromParam(model,type=gl.ECov.NUGGET, sill = 1) ##Ajouter un nugget de variance 1
 
     df=pd.DataFrame({'Simu': db['z1']})
@@ -196,9 +200,9 @@ def merge_components(components,set_size):
 def simu_graph(set_size, range_val, param_model, lambdaParent, lambdaDaughter, radiusCluster, threshold, max_neighbors):
     data = [simu_echantillonage_graph(range_val, param_model, lambdaParent, lambdaDaughter, radiusCluster, threshold, max_neighbors) for i in range(int(set_size))]
     data=merge_components(data,set_size)
-    data.y=torch.tensor((range_val,param_model))
+    data.y=torch.log(torch.tensor((range_val,param_model)))
+    
     return data
-
 
 
 def composante_connexes(data):
@@ -207,6 +211,8 @@ def composante_connexes(data):
     print(f"Le graphe contient {num_components} composante(s) connexe(s).")
     return(num_components)
 
+L=[0.3,0.3,0.5,0.5]
+M=[0.7,0.7,0.5,0.5]
 
 def datamaker(constant_product,n,set_size):
     datalist=[]
@@ -214,16 +220,19 @@ def datamaker(constant_product,n,set_size):
     variance_list=np.random.uniform(0.0,1.0,n)
     lambdaParent = np.random.uniform(50, 150,n)
     lambdaDaughter =[ (constant_product / lambdaParent[i]) for i in range(n)]
-    for i in range(n):          
-        datalist.append(simu_graph(set_size,range_list[i],variance_list[i],lambdaParent[i],lambdaDaughter[i],0.10,0.4,10))
+    for i in range(n): 
+        datalist.append(simu_graph(set_size,range_list[i],variance_list[i],lambdaParent[i],lambdaDaughter[i],0.10,0.4,10))         
+        #datalist.append(simu_graph(set_size,range_list[i],variance_list[i],lambdaParent[i],lambdaDaughter[i],0.10,0.4,10))
     #composante_connexes(datalist)
     print(f"Generated dataset size: {n*set_size}")
     return datalist
 
-constant_product=5000
+constant_product=3000
 n=10
-set_size=5
+set_size=10
 datalist=datamaker(constant_product,n,set_size)
+
+#datalist2=datamaker(constant_product,n,set_size)
 
 
 
@@ -256,7 +265,8 @@ class EdgeFeatureMLP2(nn.Module): #(1,128,10)
         self.mlp = nn.Sequential(
         nn.Linear(input_dim, hidden_dim),
         nn.ReLU(),
-        nn.Linear(hidden_dim, output_dim)
+        nn.Linear(hidden_dim, output_dim),
+        nn.ReLU()
     ).to(device)
 
     def forward(self, x):
@@ -368,7 +378,7 @@ class CouchesintermediairesGNN(nn.Module):
                 sum_featuresnew += rho_j_j_prime * w_tilde_j_j_primenew
             dataa[j, 1, :] = sum_featuresnew
             
-            dataa[j, 0, :] = torch.sigmoid(
+            dataa[j, 0, :] = torch.nn.functional.relu(
                 self.gamma1 @ x[j, 0,:].view(-1,1) + 
                 self.gamma2 @ sum_featuresnew.view(-1,1) + 
                 self.bias.view(-1,1)
@@ -383,7 +393,8 @@ class EdgeFeatureMLP1(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim)
+            nn.Linear(hidden_dim, output_dim),
+            nn.ReLU()
         ).to(device) 
 
     def forward(self, x):
@@ -465,11 +476,13 @@ class CoucheinitialeGNN(nn.Module):
                 sum_features += rho_j_j_prime * w_tilde_j_j_primenew
             dataa[j, 1, :] = sum_features
 
-            dataa[j, 0, :] = torch.sigmoid(
+            dataa[j, 0, :] = torch.nn.functional.relu(
                 self.gamma1 @ x[j, 0].view(-1,1) + 
                 self.gamma2 @ sum_features.view(-1,1) + 
                 self.bias.view(-1,1)
             ).squeeze()
+
+            #dataa[j, 0, :]=dataa[j, 0, :].squeeze()
 
         
         
@@ -487,8 +500,8 @@ class MappingLayer(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim),
-            expact()
+            nn.Linear(hidden_dim, output_dim)#,
+            #expact()
         )
 
     def forward(self, pooled_feature):
@@ -507,33 +520,29 @@ class DeepSetsModel(nn.Module):
     def forward(self, data):
         time1 = time.time()
         data = data.to(device)
+        #print('init',data.x)
         data_T=data.T.to(device)
-        data_batch=data.T2.to(device)
-        data = self.couche_initiale_gnn(data)
-        print("first layer done")
-        time2 = time.time() - time1
-        print(time2)
-        data = self.couche_intermediaire(data)
-        print("convolutional layer done")
-        time3 = time.time() - time1
-        print(time3)
-        #print('data',data)
         #print('data_T',data_T)
-        pooled_graphs = global_mean_pool(data.x[:,0,:], data_T)
-        #print('pooled_graphs',pooled_graphs)
-        #print('data_batch',data_batch)
-        print("pooled layer among graph done")
-        time4 = time.time() - time1
-        print(time4)
+        data_batch=data.T2.to(device)
+        #print('databatchT2',data_batch)
+        data = self.couche_initiale_gnn(data)
+        #print('post init',data.x)
+        #print("first layer done")
+        time2 = time.time() - time1
+        #print(time2)
+        data = self.couche_intermediaire(data)
+        #print("convolutional layer done")
+        time3 = time.time() - time1
+        #print(time3)
+        #print('post inter',data.x)
+        pooled_graphs = global_mean_pool(data.x[:,0,:], data_T)  
+        #print(pooled_graphs)
         out=global_mean_pool(pooled_graphs, data_batch)  
+        #print(out)
         #print('outavantmapping',out)    
-        print("pooled layer of DeepSets done")
-        time5 = time.time() - time1
-        print(time5)
+        
         output = self.mapping(out)
-        print("MLP done")
-        time6 = time.time() - time1
-        print(time6)
+        
         output = output.view(-1)
         return output
     
@@ -559,7 +568,7 @@ def collate_fn(batch):
     #T=torch.empty(len(batch))
     labels = torch.empty(len(batch),2)
     for allset, label in batch:
-        data_list.append([Batch.from_data_list(sets)])
+        #data_list.append([Batch.from_data_list(sets)])
         labels.append(label)
         x_list.append(allset.x)
         edge_index_list.append(allset.edge_index + num_nodes_offset)  # Ajuster les indices des arêtes
@@ -575,13 +584,8 @@ def collate_fn(batch):
     graph = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     #graph.T=T
     labels = torch.tensor( labels,dtype=torch.float32)
-    return data_list, labels
 
-
- 
-
-
-
+    return graph, labels
 
 
 
@@ -589,23 +593,125 @@ def collate_fn(batch):
 
 dataset = GraphSetDataset(datalist)
 
-batch_size = 5
+#dataset2 = GraphSetDataset(datalist2)
 
+
+batch_size = 5
 loader = DataLoader(dataset, batch_size, collate_fn=collate_fn, shuffle=True)
+#loader2=DataLoader(dataset2, batch_size, collate_fn=collate_fn, shuffle=True)
 
 model = DeepSetsModel(node_input_dim=1, hidden_dim=20, edge_hidden_dim=128, edge_output_dim=10, final_output_dim=2, mapping_hidden_dim=128, threshold=0.40).to(device)
 
+optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+
+
+
+#######
+
+
+
+
+
+
+
+import torchvision
+from torchviz import make_dot
+
+batched_data = next(iter(loader))
+
+import networkx as nx
+
+def visualize_graph(G):
+    plt.figure(figsize=(7,7))
+    plt.xticks([])
+    plt.yticks([])
+    nx.draw_networkx(G, pos=nx.spring_layout(G, seed=42), with_labels=False)
+    plt.show()
+
+
+from torch_geometric.utils import to_networkx
+
+G = to_networkx(dataset2.__getitem__(0), to_undirected=True)
+visualize_graph(G)
+
+
+T1 = []
+for j in range(len(batched_data.T)):
+    T1.extend([j] * int(batched_data.T[j].item()))  
+batched_data.T = torch.tensor(T1, device=device)
+T2=[]
+for w in range(len(batched_data)):
+    T2.extend([w] * set_size)
+batched_data.T2 = torch.tensor(T2, device=device)
+
+yhat = model(batched_data)
+
+make_dot(yhat, params=dict(list(model.named_parameters())))
+
+
+
+
+
+
+#########
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ###
-
-
+#    timing of a forward 
+###
 t = tqdm(enumerate(loader))
 timeinin = time.time()
 timein = timeinin
 for i, batched_data in t:
+    #print('batched_data',batched_data)
+    composante_connexes(batched_data)
+    optimizer.zero_grad()
+    T1 = []
+    for j in range(len(batched_data.T)):
+        T1.extend([j] * int(batched_data.T[j].item()))  
+    batched_data.T = torch.tensor(T1, device=device)
+    T2=[]
+    for w in range(len(batched_data)):
+        T2.extend([w] * set_size)
+    batched_data.T2 = torch.tensor(T2, device=device)
+    #print('T2',T2)
+
+    batched_data.y = batched_data.y.view(batch_size, 2) 
+    batched_data = batched_data.to(device)
+
+    output = model(batched_data)
+    output=torch.reshape(output,(batch_size,2))
+    #print(output)
+    timeinter = time.time() - timein
+    timein = timeinter
+    #print(timeinter)
+
+timeout = time.time() - timein
+print(timeout)
+
+
+
+
+
+t = tqdm(enumerate(loader2))
+timeinin = time.time()
+timein = timeinin
+for i, batched_data in t:
+    print('batched_data',batched_data)
+
     composante_connexes(batched_data)
     optimizer.zero_grad()
     T1 = []
@@ -634,7 +740,15 @@ print(timeout)
 
 
 
+
+
+
 #####
+
+
+
+
+
 
 
 
@@ -665,15 +779,16 @@ def train(model, optimizer, loader, n, batch_size, leave=False):
 
         output = model(batched_data)
         output=torch.reshape(output,(batch_size,2))
-        #print('outputdetrain',output)
+        print('outputdetrain',output)
 
         if output.size(0) != batch_size or output.size(1) != 2:
             raise ValueError(f"Expected output shape ({batch_size}, 2) but got {output.size()}")
 
         y_batch = batched_data.y.to(device)
-        #print('y_batch de train avant MAE',y_batch)
-
+        print('y_batch de train avant MAE',y_batch)
         batch_loss = MAE(output, y_batch)
+        
+        #print('training...')
         batch_loss.backward()
         optimizer.step()
 
@@ -688,7 +803,8 @@ def train(model, optimizer, loader, n, batch_size, leave=False):
 
 
 # Epoch loop
-n_epochs = 3
+n_epochs = 50
+Loss=[]
 n = len(dataset)
 for epoch in range(n_epochs):
     print(f'start of epoch: {epoch+1}/{n_epochs}')
@@ -701,6 +817,12 @@ for epoch in range(n_epochs):
         leave=(epoch == n_epochs - 1),
     )
     print(f'loss: {loss}')
+    Loss.append(loss)
+
+
+import matplotlib
+
+matplotlib.pyplot.plot(np.array(Loss), 'r')
 
 
 torch.save(model.state_dict(),'modelparameters_10x5_10ep_batchsize5')
